@@ -4,28 +4,31 @@
 -include("defs.hrl").
 
 -export([start_link/2, get_y/1, get_c/1, get_xpr/1, get_r/1, exp/2]).  %% Module API functions
--export([init/1, terminate/3, code_change/4, callback_mode/0]).  %% gen_statem callbacks
--export([state_offer_y/3, state_offer_c/3, state_offer_xr/3]).   %% Next state functions
+-export([init/1, terminate/3, code_change/4, callback_mode/0]).        %% gen_statem callbacks
+-export([state_offer_y/3, state_offer_c/3, state_offer_xr/3]).         %% Next state functions
 
 
 %% TODO:
-%%  1. IMPLEMENT CHEATING STRATEGY!!!!! (show that rnd 0.5 is best strategy)
-%%  2. Cheating statistics
-%%  3. Clean-up, -spec
-%%  4. Check into github
+%%  1. Tighten up  -spec
+%%  2. Revist stats
 
 %%%===================================================================
 %%% Module API functions
 %%%===================================================================
 
+-spec start_link(any(), any()) -> any().
 start_link(Name, Honest) -> gen_statem:start_link({local, Name}, ?MODULE, [#state{honest=Honest}], []).
 
+-spec get_y(any()) -> any().
 get_y(Name) -> gen_statem:call(Name, get_y).
 
+-spec get_c(any()) -> any().
 get_c(Name) -> gen_statem:call(Name, get_c).
 
+-spec get_xpr(any()) -> any().
 get_xpr(Name) -> gen_statem:call(Name, get_xpr).
 
+-spec get_r(any()) -> any().
 get_r(Name) -> gen_statem:call(Name, get_r).
 
 
@@ -34,14 +37,18 @@ get_r(Name) -> gen_statem:call(Name, get_r).
 %%% gen_statem callbacks
 %%%===================================================================
 
+-spec init(list()) -> {'ok',_,_}.
 init([Honest]) ->
   _ = crypto:rand_seed(),
   {ok, state_offer_y, Honest}.
 
+-spec callback_mode() -> 'handle_event_function' | 'state_functions'.
 callback_mode() -> state_functions.
 
+-spec terminate(any(), any(), any()) -> atom().
 terminate(_Reason, _StateName, _State) -> ok.
 
+-spec code_change(any(), any(), any(), any()) -> tuple().
 code_change(_OldVsn, StateName, State, _Extra) -> {ok, StateName, State}.
 
 
@@ -53,13 +60,15 @@ code_change(_OldVsn, StateName, State, _Extra) -> {ok, StateName, State}.
 %% In state_offer_y: match call from get_y, calc/save X Y, reply Y, and move to state_offer_c
 -spec state_offer_y(tuple(), atom(), any()) -> tuple().
 state_offer_y({call, From}, get_y, State) ->
-  X = rand:uniform(1 bsl (1024 + 64)) rem ?PRIME,  %% 64 bits more than needed
-  Y = exp(?GENERATOR, X),
-  X1 = if State#state.honest =:= true -> X;
-         true -> 100  %% Erase X if we are cheating
-         end,
-  X2 = case State#state.honest of true -> X; false -> 100 end,
-  NewState = State#state{x=X1, y=Y, iter=0},
+  case State#state.honest of
+    true ->   %% Honestly calculate X and Y
+      X = rand:uniform(1 bsl (1024 + 64)) rem ?PRIME,  %% 64 bits more than needed
+      Y = exp(?GENERATOR, X);
+    false ->  %% Dishonest: random rubbish for now, and try to cover up later
+      X = rand:uniform(1 bsl (1024 + 64)) rem ?PRIME,
+      Y = rand:uniform(1 bsl (1024 + 64)) rem ?PRIME
+  end,
+  NewState = State#state{x=X, y=Y, iter=0},
   {next_state, state_offer_c, NewState, [{reply, From, Y}]};
 
 % In state_offer_y: match anything (else), reply error, and move to state_offer_y
@@ -68,16 +77,17 @@ state_offer_y({_Event, From}, _Source, _State) ->
 
 
 %% In state_offer_c: match call from get_c, calc/save R C, reply C, and move to state_offer_xr
+-spec state_offer_c(tuple(), atom(), any()) -> tuple().
 state_offer_c({call, From}, get_c, State) ->
   R = rand:uniform(1 bsl (1024 + 64)) rem ?PRIME,
-  Rnd = rand:uniform(),                                                      %% Predict R < 0.5 or L >= 0.5
-  C = if
-        (State#state.honest =:= true) or (Rnd < 0.5) -> exp(?GENERATOR, R);  %% Honest or predict=R
-    true ->                                                                  %% Dishonest and predict=L
-      A = exp(?GENERATOR, R),
-      B = exp(?GENERATOR, State#state.x),
-      BInv = exp(B, ?PRIME-2),
-      (A * BInv) rem ?PRIME
+  Rnd = rand:uniform(),  %% Needed only for dishonest prover; Predict the verifier's next ask
+  case (State#state.honest =:= true) or (Rnd < 0.5) of
+    true -> C = exp(?GENERATOR, R);  %% Honest or predict that verifier will ask for R
+    false ->                         %% Dishonest and predict the verifier will ask for (x+r) mod (p-1)
+      Gr = exp(?GENERATOR, R),              %% G^R
+      Gx = exp(?GENERATOR, State#state.x),  %% G^X
+      GxInv = exp(Gx, ?PRIME-2),            %% Inv(G^X)
+      C = (Gr * GxInv) rem ?PRIME           %% G^R * Inv(G^X)
     end,
   NewState = State#state{c=C, r=R, iter=State#state.iter+1},
   {next_state, state_offer_xr, NewState, [{reply, From, C}]};
@@ -88,8 +98,9 @@ state_offer_c({_Event, From}, _Source, _State) ->
 
 
 %% In state_offer_xr: match call from get_xpr, calc x+r mod (p-1), reply result, and move to state_offer_y
+-spec state_offer_xr(tuple(), atom(), any()) -> tuple().
 state_offer_xr({call, From}, get_xpr, State) ->
-  Xpr = (State#state.x + State#state.r) rem (?PRIME - 1),  %%% PROB HERE BECAUSE X WAS RESET
+  Xpr = (State#state.x + State#state.r) rem (?PRIME - 1),
   {next_state, case State#state.iter < ?MAX_ITER of true -> state_offer_c; false -> state_offer_y end,
     State, [{reply, From, Xpr}]};
 
