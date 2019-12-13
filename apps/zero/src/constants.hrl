@@ -7,7 +7,9 @@
 -define(MAX_ITER, 4).
 
 %% State record
--record(state, {x, y, r, c, iter, honest}).
+-record(state, {x :: non_neg_integer(), y :: non_neg_integer(),
+                r :: non_neg_integer(), c :: non_neg_integer(),
+                iter :: non_neg_integer() , honest :: boolean()}).
 
 
 %% sys:trace(myfsm, true).
