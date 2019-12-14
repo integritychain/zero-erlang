@@ -4,10 +4,12 @@
 
 -export([exp/2]).
 
+
 %% Modular exponentiation via square and multiply algorithm
 -spec(exp(X :: non_neg_integer(), Exp :: non_neg_integer()) -> non_neg_integer()).
 exp(X, Exp) ->
   exp(X, Exp, 1).
+
 
 -spec(exp(X :: non_neg_integer(), Exp :: non_neg_integer(), Result :: non_neg_integer()) -> non_neg_integer()).
 exp(_X, 0, Result) ->

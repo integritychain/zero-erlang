@@ -2,19 +2,25 @@
 -author("eschorn").
 -include("constants.hrl").
 
+
 -export([verify/1, test_dishonest/0, test_honest/0]).
 
+
+%% Count how many of 1000 dishonest provers can trick us. Depends upon ?MAX_ITER
 test_dishonest() ->
-  length(lists:filter(fun(T) -> verifier1:verify(dishonest_prover) end, lists:seq(1, 1000))).
+  length(lists:filter(fun(_T) -> verifier1:verify(dishonest_prover) end, lists:seq(1, 1000))).
 
+%% Count how many of 1000 honest provers are honest. Should be all of them
 test_honest() ->
-  length(lists:filter(fun(T) -> verifier1:verify(honest_prover) end, lists:seq(1, 1000))).
+  length(lists:filter(fun(_T) -> verifier1:verify(honest_prover) end, lists:seq(1, 1000))).
 
+
+%% Given a prover, initiate the protocol
 verify(Name) ->
   Y = prover1:get_y(Name),
   verify(Name, Y, ?MAX_ITER, true).
 
-
+%% Run the protocol and return the logical AND of each honesty test
 verify(_Name, _Y, 0, Result) -> Result;
 verify(Name, Y, Iter, Result) ->
   C = prover1:get_c(Name),
